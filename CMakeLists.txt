@@ -9,7 +9,6 @@ set(CMAKE_CXX_STANDARD 17)
 set(ALL_TARGET_LIBRARIES "")
 include(cmake/boost.cmake)
 include(cmake/global_defination.cmake)
-#include(cmake/geographic.cmake)
 include(cmake/glog.cmake)
 include(cmake/PCL.cmake)
 
