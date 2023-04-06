@@ -1,4 +1,6 @@
 find_package(OpenCV REQUIRED)
+include_directories("/usr/include/opencv4")
+include_directories("/usr/local/include/opencv4")
 # if you want to use opencv 3.4.10, you should set the OpenCV_DIR to the path of opencv 3.4.10
 #if (${OpenCV_VERSION} VERSION_GREATER "4.0.0")
 #    set(OpenCV_DIR  /home/qzj/Downloads/tool/opencv-3.4.10/build)
@@ -15,7 +17,7 @@ find_package(OpenCV REQUIRED)
 #            ${OpenCV_LIB_DIR}/libopencv_ml.so ${OpenCV_LIB_DIR}/libopencv_objdetect.so ${OpenCV_LIB_DIR}/libopencv_photo.so
 #            ${OpenCV_LIB_DIR}/libopencv_stitching.so ${OpenCV_LIB_DIR}/libopencv_superres.so ${OpenCV_LIB_DIR}/libopencv_videostab.so)
 #endif()
-
+message(STATUS "OpenCV version: ${OpenCV_VERSION}")
 include_directories(${OpenCV_INCLUDE_DIRS})
 list(APPEND ALL_TARGET_LIBRARIES ${OpenCV_LIBS})
 

@@ -1,5 +1,5 @@
 /*
- * @Description: 读写文件管理
+ * @Description: file manager
  * @Author: Zhijian Qiao
  * @Date: 2020-02-24 19:22:53
  */
@@ -9,16 +9,43 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <boost/filesystem.hpp>
 
 class FileManager {
 public:
-    static bool CreateFile(std::ofstream &ofs, std::string file_path);
+    static bool CreateFile(std::ofstream &ofs, std::string file_path) {
+        ofs.close();
+        boost::filesystem::remove(file_path.c_str());
 
-    static bool InitDirectory(std::string directory_path, std::string use_for);
+        ofs.open(file_path.c_str(), std::ios::out);
+        if (!ofs) {
+            std::cerr << "Cannot create file: " << file_path << std::endl;
+            return false;
+        }
 
-    static bool CreateDirectory(std::string directory_path, std::string use_for);
+        return true;
+    }
 
-    static bool CreateDirectory(std::string directory_path);
+    static bool InitDirectory(std::string directory_path) {
+        if (boost::filesystem::is_directory(directory_path)) {
+            boost::filesystem::remove_all(directory_path);
+        }
+
+        return CreateDirectory(directory_path);
+    }
+
+    static bool CreateDirectory(std::string directory_path) {
+        if (!boost::filesystem::is_directory(directory_path)) {
+            boost::filesystem::create_directory(directory_path);
+        }
+
+        if (!boost::filesystem::is_directory(directory_path)) {
+            std::cerr << "Cannot create directory: " << directory_path << std::endl;
+            return false;
+        }
+
+        return true;
+    }
 };
 
 #endif
