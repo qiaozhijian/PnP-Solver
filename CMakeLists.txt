@@ -20,6 +20,6 @@ include_directories(
 
 file(GLOB_RECURSE ALL_SRCS "src/*.cpp")
 
-add_executable(template_node node/pnp_benchmark.cpp ${ALL_SRCS})
-target_link_libraries(template_node ${ALL_TARGET_LIBRARIES})
+add_executable(pnp_benchmark node/pnp_benchmark.cpp ${ALL_SRCS})
+target_link_libraries(pnp_benchmark ${ALL_TARGET_LIBRARIES})
 

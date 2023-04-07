@@ -44,6 +44,7 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+// generate dataset
 void Dataset(std::vector<std::vector<cv::Point3f>>& points_3d_all,
              std::vector<std::vector<cv::Point2f>>& points_2d_all,
              std::vector<Eigen::Matrix4d>& T_wc_gts,
@@ -53,9 +54,11 @@ void Dataset(std::vector<std::vector<cv::Point3f>>& points_3d_all,
     points_3d_all.clear();
     T_wc_gts.clear();
     for (int i = 0; i < 100; ++i) {
+        // generate random transformation
         Eigen::Matrix4d T_wc_gt = random_transformation_matrix(5);
         std::vector<cv::Point3f> points_3d;
         std::vector<cv::Point2f> points_2d;
+        // generate random 2d points and corresponding 3d points
         cam.RandomSampleForPnP(points_3d, points_2d, T_wc_gt, 100, outlier_ratio);
         points_3d_all.push_back(points_3d);
         points_2d_all.push_back(points_2d);

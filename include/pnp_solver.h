@@ -38,9 +38,8 @@ public:
     }
 
     //Gaussian-Newton method to solve PnP
-    Eigen::Matrix4d solvePnPbyGaussianNewton(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2,
-                                             const Eigen::Matrix4d &T_init = Eigen::Matrix4d::Identity(),
-                                             std::vector<int> inliers = std::vector<int>()){
+    void solvePnPbyGaussianNewton(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2,
+                                             Eigen::Matrix3d &R_cw, Eigen::Vector3d &t_cw, std::vector<int> inliers = std::vector<int>()){
         assert(pts_3.size() == pts_2.size());
         std::vector<cv::Point2f> un_pts_2; // normalized points in camera frame
         cv::undistortPoints(pts_2, un_pts_2, K, D);
@@ -52,9 +51,6 @@ public:
             }
         }
 
-        Eigen::Matrix4d T_cw = T_init;
-        Eigen::Matrix3d R_cw = T_cw.block<3, 3>(0, 0);
-        Eigen::Vector3d t_cw = T_cw.block<3, 1>(0, 3);
         for (int iter = 0; iter < 10; ++iter) {
             Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
             Eigen::Matrix<double, 6, 1> b = Eigen::Matrix<double, 6, 1>::Zero();
@@ -87,12 +83,11 @@ public:
             t_cw += dx.block<3, 1>(0, 0);
             //std::cout << "R_cw: " << std::endl << R_cw << std::endl;
         }
-        T_cw.block<3, 3>(0, 0) = R_cw;
-        T_cw.block<3, 1>(0, 3) = t_cw;
-        return T_cw;
     }
 
-    Eigen::Matrix4d solvePnPbyRANSAC(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2, std::vector<int> &inliers_best) {
+    void solvePnPbyRANSAC(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2, 
+                          Eigen::Matrix3d &R_cw, Eigen::Vector3d &t_cw, 
+                          std::vector<int> &inliers_best) {
         assert(pts_3.size() == pts_2.size());
         std::vector<cv::Point2f> un_pts_2; // normalized points in camera frame
         cv::undistortPoints(pts_2, un_pts_2, K, D);
@@ -104,8 +99,7 @@ public:
         }
         //    randomly select 4 pairs
         int max_inliers = 0;
-        Eigen::Matrix4d T_cw_best = Eigen::Matrix4d::Identity();
-        for (int iter = 0; iter < 100; ++iter) {
+        for (int iter = 0; iter < 1000; ++iter) {
             random_shuffle(idx.begin(), idx.end());
             std::vector<cv::Point3f> pts_3_sample;
             std::vector<cv::Point2f> pts_2_sample;
@@ -113,13 +107,13 @@ public:
                 pts_3_sample.push_back(pts_3[idx[i]]);
                 pts_2_sample.push_back(pts_2[idx[i]]);
             }
-            Eigen::Matrix4d T_cw = solvePnPbyDLT(pts_3_sample, pts_2_sample);
+            solvePnPbyDLT(pts_3_sample, pts_2_sample, R_cw, t_cw);
 
             std::vector<double> errors;
             std::vector<int> inliers_idx;
             for (int i = 0; i < total_pairs; ++i) {
                 Eigen::Vector3d p_w(pts_3[i].x, pts_3[i].y, pts_3[i].z);
-                Eigen::Vector3d p_c = T_cw.block<3, 3>(0, 0) * p_w + T_cw.block<3, 1>(0, 3);
+                Eigen::Vector3d p_c = R_cw * p_w + t_cw;
                 Eigen::Vector2d p_norm_c_est(p_c(0) / p_c(2), p_c(1) / p_c(2));
                 Eigen::Vector2d p_norm_c(un_pts_2[i].x, un_pts_2[i].y);
                 double error = (p_norm_c - p_norm_c_est).norm() * K.at<double>(0, 0);
@@ -129,7 +123,6 @@ public:
             }
             if (inliers_idx.size() > max_inliers) {
                 max_inliers = inliers_idx.size();
-                T_cw_best = T_cw;
                 inliers_best = inliers_idx;
             }
             if (max_inliers > total_pairs * 0.5) {
@@ -143,11 +136,10 @@ public:
             pts_3_inliers.push_back(pts_3[inliers_best[i]]);
             pts_2_inliers.push_back(pts_2[inliers_best[i]]);
         }
-        T_cw_best = solvePnPbyDLT(pts_3_inliers, pts_2_inliers);
-        return T_cw_best;
+        solvePnPbyDLT(pts_3_inliers, pts_2_inliers, R_cw, t_cw);
     }
 
-    Eigen::Matrix4d solvePnPbyDLT(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2)
+    void solvePnPbyDLT(const std::vector<cv::Point3f> &pts_3, const std::vector<cv::Point2f> &pts_2, Eigen::Matrix3d &R_cw, Eigen::Vector3d &t_cw)
     {
         assert(pts_3.size() == pts_2.size());
         std::vector<cv::Point2f> un_pts_2; // normalized points in camera frame
@@ -176,17 +168,12 @@ public:
         Eigen::JacobiSVD<Eigen::Matrix3d> svd_R(R_hat, Eigen::ComputeFullU | Eigen::ComputeFullV);
         Eigen::Matrix3d U = svd_R.matrixU();
         Eigen::Matrix3d V = svd_R.matrixV();
-        Eigen::Matrix3d R = U * V.transpose();
-        if (R.determinant() < 0) { // make sure the rotation matrix is right-handed
+        R_cw = U * V.transpose();
+        if (R_cw.determinant() < 0) { // make sure the rotation matrix is right-handed
             V.col(2) = -V.col(2);
-            R = U * V.transpose();
+            R_cw = U * V.transpose();
         }
-        Eigen::Vector3d t = H_hat.col(3) / H_hat.col(0).norm();
-
-        Eigen::Matrix4d T_dlt = Eigen::Matrix4d::Identity();
-        T_dlt.block<3, 3>(0, 0) = R;
-        T_dlt.block<3, 1>(0, 3) = t;
-        return T_dlt;
+        t_cw = H_hat.col(3) / H_hat.col(0).norm();
     }
 
     // test function, can be used to verify your estimation
@@ -222,28 +209,24 @@ namespace custom{
                   const cv::Mat &K, const cv::Mat &D,
                   cv::Mat &rvec, cv::Mat &t_est, int method_=PNP_SOLVER_DLT){
         PnPSolver solver(method_, K, D);
-        Eigen::Matrix4d T;
+        Eigen::Matrix3d R_cw;
+        Eigen::Vector3d t_cw;
         if (method_==PNP_SOLVER_DLT){
-            T  = solver.solvePnPbyDLT(pts_3, pts_2);
+            solver.solvePnPbyDLT(pts_3, pts_2, R_cw, t_cw);
         } else if (method_==PNP_SOLVER_RANSAC){
             std::vector<int> inliers_best;
-            T  = solver.solvePnPbyRANSAC(pts_3, pts_2, inliers_best);
+            solver.solvePnPbyRANSAC(pts_3, pts_2, R_cw, t_cw, inliers_best);
         } else if (method_==PNP_SOLVER_GAUSS_NEWTON){
             std::vector<int> inliers_best;
-            Eigen::Matrix4d T_dlt  = solver.solvePnPbyRANSAC(pts_3, pts_2, inliers_best);
-            T = solver.solvePnPbyGaussianNewton(pts_3, pts_2, T_dlt, inliers_best);
+            solver.solvePnPbyRANSAC(pts_3, pts_2, R_cw, t_cw, inliers_best);
+            solver.solvePnPbyGaussianNewton(pts_3, pts_2, R_cw, t_cw, inliers_best);
         } else {
             std::cerr << "method not supported!" << std::endl;
         }
 
-        Eigen::Matrix3d R_est;
-        R_est = T.block<3, 3>(0, 0);
-        Eigen::Vector3d rvec_ = RotationVector(R_est);
+        Eigen::Vector3d rvec_ = RotationVector(R_cw);
         rvec = (cv::Mat_<double>(3, 1) << rvec_(0), rvec_(1), rvec_(2));
-
-        Eigen::Vector3d t_est_;
-        t_est_ = T.block<3, 1>(0, 3);
-        t_est = (cv::Mat_<double>(3, 1) << t_est_(0), t_est_(1), t_est_(2));
+        t_est = (cv::Mat_<double>(3, 1) << t_cw(0), t_cw(1), t_cw(2));
     }
 }
 
