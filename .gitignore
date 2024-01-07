@@ -36,5 +36,6 @@ cmake-build-release
 build
 .idea
 Log
+.vscode
 
 cmake-build-debug

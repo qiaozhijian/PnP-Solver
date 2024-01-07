@@ -7,6 +7,7 @@
 #include "eigen_utils.h"
 #include "virtual_cam.h"
 #include "algorithm"
+#include <glog/logging.h>
 using namespace std;
 
 void PnPExp(std::string method, std::vector<std::vector<cv::Point3f>>& points_3d_all,
@@ -19,17 +20,22 @@ void Dataset(std::vector<std::vector<cv::Point3f>>& points_3d_all,
 
 ///////主函数
 int main(int argc, char **argv) {
+    gflags::ParseCommandLineFlags(&argc, &argv, true);
+    google::InitGoogleLogging(argv[0]);
+    FLAGS_alsologtostderr = 1;
+
     std::vector<std::vector<cv::Point3f>> points_3d_all;
     std::vector<std::vector<cv::Point2f>> points_2d_all;
     std::vector<Eigen::Matrix4d> T_wc_gts;
 
-    std::cout << "PnP Benchmark with " << 0.0 << " outlier ratio" << std::endl;
+    LOG(INFO) << "PnP Benchmark with " << 0.0 << " outlier ratio" << std::endl;
     Dataset(points_3d_all, points_2d_all, T_wc_gts, 0.0);
     PnPExp("OPENCV", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("OPENCV_RANSAC", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("DLT", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("DLT_RANSAC", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("GAUSS_NEWTON", points_3d_all, points_2d_all, T_wc_gts);
+    PnPExp("LM", points_3d_all, points_2d_all, T_wc_gts);
     std::cout << std::endl;
 
     std::cout << "PnP Benchmark with " << 0.2 << " outlier ratio" << std::endl;
@@ -39,6 +45,7 @@ int main(int argc, char **argv) {
     PnPExp("DLT", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("DLT_RANSAC", points_3d_all, points_2d_all, T_wc_gts);
     PnPExp("GAUSS_NEWTON", points_3d_all, points_2d_all, T_wc_gts);
+    PnPExp("LM", points_3d_all, points_2d_all, T_wc_gts);
     std::cout << std::endl;
 
     return 0;
@@ -94,6 +101,9 @@ void PnPExp(std::string method, std::vector<std::vector<cv::Point3f>>& points_3d
         else if (method == "GAUSS_NEWTON"){
             custom::solvePnP(points_3d, points_2d, cam.GetK(), cam.GetD(), rvec, tvec, PNP_SOLVER_GAUSS_NEWTON);
         }
+        else if (method == "LM"){
+            custom::solvePnP(points_3d, points_2d, cam.GetK(), cam.GetD(), rvec, tvec, PNP_SOLVER_LM);
+        }
         else{
             std::cerr << method << " is not supported." << std::endl;
         }
@@ -116,5 +126,5 @@ void PnPExp(std::string method, std::vector<std::vector<cv::Point3f>>& points_3d
 
     double rot_err_avg = std::accumulate(rot_errs.begin(), rot_errs.end(), 0.0) / rot_errs.size();
     double trans_err_avg = std::accumulate(trans_errs.begin(), trans_errs.end(), 0.0) / trans_errs.size();
-    std::cout << "Method: " << method << ", rotation error " << rot_err_avg << " deg, " << "translation error " << trans_err_avg << std::endl;
+    LOG(INFO) << "Method: " << method << ", rotation error " << rot_err_avg << " deg, " << "translation error " << trans_err_avg << std::endl;
 }
