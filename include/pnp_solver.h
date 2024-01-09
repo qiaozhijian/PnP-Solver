@@ -9,10 +9,12 @@
 #include "eigen_utils.h"
 #include "file_manager.hpp"
 #include <opencv2/opencv.hpp>
+#include <glog/logging.h>
 
 #define PNP_SOLVER_DLT 0
 #define PNP_SOLVER_RANSAC 1
 #define PNP_SOLVER_GAUSS_NEWTON 2
+#define PNP_SOLVER_LM 3
 
 class PnPSolver {
 private:
@@ -82,6 +84,205 @@ public:
             R_cw = angle_axis.toRotationMatrix() * R_cw;
             t_cw += dx.block<3, 1>(0, 0);
             //std::cout << "R_cw: " << std::endl << R_cw << std::endl;
+        }
+    }
+    
+    // L-M method to solve PnP
+    void solvePnPbyLM(const std::vector<cv::Point3f>& pts_3,
+                      const std::vector<cv::Point2f>& pts_2,
+                      Eigen::Matrix3d& R_cw,
+                      Eigen::Vector3d& t_cw,
+                      std::vector<int> inliers = std::vector<int>()) {
+        Eigen::Matrix3d raw_R_cw = R_cw;
+        Eigen::Vector3d raw_t_cw = t_cw;
+        LOG(INFO) << "solvePnPbyLM\n";
+        LOG(INFO) << "init t_cw: " << t_cw;
+        assert(pts_3.size() == pts_2.size());
+        std::vector<cv::Point2f> un_pts_2;  // normalized points in camera frame
+        cv::undistortPoints(pts_2, un_pts_2, K, D);
+
+        if (inliers.empty()) {
+            inliers.resize(pts_3.size());
+            for (int i = 0; i < pts_3.size(); ++i) {
+                inliers[i] = i;
+            }
+        }
+
+        Eigen::Matrix<double, 6, 6> H = Eigen::Matrix<double, 6, 6>::Zero();
+        Eigen::Matrix<double, 6, 1> b = Eigen::Matrix<double, 6, 1>::Zero();
+
+        // 计算初始的e_t*e,以及lm_threshold
+        double init_ete = 0;
+        makeHessian(pts_3, un_pts_2, R_cw, t_cw, H, b, inliers, &init_ete);
+
+        // 计算初始的阻尼因子
+        double tau = 1e-5;
+        double max_diagonal = 0;
+        for (int i = 0; i < 6; i++) {
+            max_diagonal = std::max(max_diagonal, H(i, i));
+        }
+        double lambda = tau * max_diagonal;
+        bool stop_iter = false;
+        double last_ete = init_ete;
+
+        for (int iter = 0; !stop_iter && iter < 10; iter++) {
+            double iter_begin_ete = 0;
+            for (const auto& idx : inliers) {
+                Eigen::Vector3d pw(pts_3[idx].x, pts_3[idx].y, pts_3[idx].z);
+                Eigen::Vector2d p_norm(un_pts_2[idx].x, un_pts_2[idx].y);
+                auto e = p_norm - (R_cw * pw + t_cw).hnormalized();
+                iter_begin_ete += e.transpose() * e;
+            }
+            static double lm_threhold = iter_begin_ete * 1e-6;
+            LOG(INFO) << ">iter: " << iter << ", lambda: " << lambda
+                      << ", iter_begin_ete: " << iter_begin_ete << "\n";
+
+            bool current_step_is_good = false;
+            int fail_count = 0;
+            double new_ete = 0;
+
+            while (!current_step_is_good) {
+                Eigen::Matrix<double, 6, 6> H_bk = H;
+
+                // add lambda to H
+                H = H + lambda * Eigen::Matrix<double, 6, 6>::Identity();
+                Eigen::Matrix<double, 6, 1> dx = H.ldlt().solve(b);
+                H = H_bk;
+
+                LOG(INFO) << "dx: " << dx.transpose() << "\n";
+                // 退出条件1
+                if (/*dx.segment(0,3).squaredNorm() < 1e-6 ||*/ fail_count >= 10) {
+                    LOG(ERROR) << "fail_count: " << fail_count << "\n";
+                    LOG(ERROR) << "stop since delta_x normal is less than threshold"
+                               << ", " << dx.segment(0, 3).squaredNorm()
+                               << "<="
+                                  "1e-6\n";
+                    stop_iter = true;
+                    break;
+                }
+
+                // 尝试更新R_cw, t_cw
+                Eigen::Matrix3d R_cw_bk = R_cw;
+                Eigen::Vector3d t_cw_bk = t_cw;
+                t_cw += dx.block<3, 1>(0, 0);
+                Eigen::AngleAxisd angle_axis(dx.segment(3, 3).norm(),
+                                             dx.segment(3, 3).normalized());
+                R_cw = R_cw * angle_axis.toRotationMatrix();
+
+                // 计算新的重投影误差, ete
+                new_ete = 0;
+                for (const auto& idx : inliers) {
+                    Eigen::Vector3d pw(pts_3[idx].x, pts_3[idx].y, pts_3[idx].z);
+                    Eigen::Vector2d p_norm(un_pts_2[idx].x, un_pts_2[idx].y);
+                    auto e = p_norm - (R_cw * pw + t_cw).hnormalized();
+                    new_ete += e.transpose() * e;
+                }
+                // 计算rho，来判断如何更新lambda
+                double scale =
+                        0.5 * dx.transpose() * (b + lambda * dx);  // scale为二阶近似ete下降的量
+                LOG(INFO) << "scale: " << scale << "\n";
+                double rho = (last_ete - new_ete) /
+                             scale;  // 分子为真正下降的ete，分母为二阶近似后下降的ete
+                LOG(INFO) << "rho: " << rho << "\n";
+
+                // update lambda 策略1
+                // if (rho > 0 && isfinite(new_ete)) {
+                //     if (rho < 0.25) {
+                //         lambda *= 2;
+                //     } else if (rho > 0.75) {
+                //         lambda *= (1 / 3.0);
+                //     } else {
+                //         ;
+                //     }
+                //     current_step_is_good = true;
+                //     fail_count = 0;
+                //     makeHessian(pts_3, un_pts_2, R_cw, t_cw, H, b, inliers);
+                //     last_ete = new_ete;
+                // } else {
+                //     fail_count += 1;
+                // }
+                // update lambda 策略2
+                double epsilon = 0.0;
+                double L_down = 9.0;
+                double L_up = 11.0;
+                if (rho > epsilon && isfinite(new_ete)) {
+                    lambda = std::max(lambda / L_down, 1e-7);
+                    last_ete = new_ete;
+                    current_step_is_good = true;
+                    fail_count = 0;
+                    makeHessian(pts_3, un_pts_2, R_cw, t_cw, H, b, inliers);
+                }
+                else {
+                    lambda = std::min(lambda * L_up, 1e7);
+                    fail_count+=1;
+                }
+
+                if (!current_step_is_good) {
+                    // 回滚状态量
+                    R_cw = R_cw_bk;
+                    t_cw = t_cw_bk;
+                }
+            }
+            if (last_ete < lm_threhold) {
+                stop_iter = true;
+                LOG(INFO) << "last_ete: " << last_ete << ", lm_threshold: " << lm_threhold << "\n";
+            }
+        }
+
+        LOG(INFO) <<" result t_cw: " << t_cw.transpose() << ", R_cw: " << R_cw;
+        Eigen::Isometry3d raw_T_cw = Eigen::Isometry3d::Identity();
+        raw_T_cw.rotate(raw_R_cw);
+        raw_T_cw.pretranslate(raw_t_cw);
+        Eigen::Isometry3d T_cw = Eigen::Isometry3d::Identity();
+        T_cw.rotate(R_cw);
+        T_cw.pretranslate(t_cw);
+        Eigen::Isometry3d T_raw_c_c  = raw_T_cw * T_cw.inverse();
+        LOG(INFO) << "T_raw_c_c: " << T_raw_c_c.translation();
+
+        return;
+    }
+
+    void makeHessian(const std::vector<cv::Point3f>& pts_3,
+                     const std::vector<cv::Point2f>& un_pts_2,
+                     Eigen::Matrix3d& R_cw,
+                     Eigen::Vector3d& t_cw,
+                     Eigen::Matrix<double, 6, 6>& H,
+                     Eigen::Matrix<double, 6, 1>& b,
+                     std::vector<int> inliers = std::vector<int>(),
+                     double* ete = nullptr) {
+        LOG(INFO) << "makeHessian";
+        if(ete){
+            *ete = 0;
+        }
+        H = Eigen::Matrix<double, 6, 6>::Zero();
+        b = Eigen::Matrix<double, 6, 1>::Zero();
+        for (const auto& idx : inliers) {
+            Eigen::Vector3d pt3(pts_3[idx].x, pts_3[idx].y, pts_3[idx].z);
+            Eigen::Vector2d pt2(un_pts_2[idx].x, un_pts_2[idx].y);
+            Eigen::Vector3d pt3_cam = R_cw * pt3 + t_cw;
+            if (pt3_cam[2] < 1e-2) {
+                pt3_cam[2] = 1e-2;
+            }
+            Eigen::Vector2d e = pt2 - pt3_cam.hnormalized();
+            if(ete){
+            *ete += e.transpose()*e;
+
+            }
+
+            Eigen::Matrix<double, 2, 6> J = Eigen::Matrix<double, 2, 6>::Zero();
+            Eigen::Matrix<double, 6, 1> tmp_b = Eigen::Matrix<double, 6, 1>::Zero();
+            Eigen::Matrix<double, 2, 3> jac_e_to_pc;
+            jac_e_to_pc << -1 * pt3_cam[2], 0, pt3_cam[0] / (pt3_cam[2] * pt3_cam[2]), 0,
+                    -1 * pt3_cam[2], pt3_cam[1] / (pt3_cam[2] * pt3_cam[2]);
+            Eigen::Matrix<double, 3, 6> jac_pc_to_rt;
+            Eigen::Vector3d rp = R_cw * pt3;
+            jac_pc_to_rt.block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+            // jac_pc_to_rt.block<3,3>(0,3) = -skew(rp);   // 左扰动
+            jac_pc_to_rt.block<3, 3>(0, 3) = -R_cw * skew(pt3);  // 右扰动
+            J = jac_e_to_pc * jac_pc_to_rt;
+            tmp_b = -1 * J.transpose() * e;
+            H += J.transpose() * J;
+            b += tmp_b;
         }
     }
 
@@ -220,6 +421,10 @@ namespace custom{
             std::vector<int> inliers_best;
             solver.solvePnPbyRANSAC(pts_3, pts_2, R_cw, t_cw, inliers_best);
             solver.solvePnPbyGaussianNewton(pts_3, pts_2, R_cw, t_cw, inliers_best);
+        } else if (method_ == PNP_SOLVER_LM) {
+            std::vector<int> inliers_best;
+            solver.solvePnPbyRANSAC(pts_3, pts_2, R_cw, t_cw, inliers_best);
+            solver.solvePnPbyLM(pts_3, pts_2, R_cw, t_cw, inliers_best);
         } else {
             std::cerr << "method not supported!" << std::endl;
         }
