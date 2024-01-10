@@ -95,8 +95,8 @@ public:
                       std::vector<int> inliers = std::vector<int>()) {
         Eigen::Matrix3d raw_R_cw = R_cw;
         Eigen::Vector3d raw_t_cw = t_cw;
-        LOG(INFO) << "solvePnPbyLM\n";
-        LOG(INFO) << "init t_cw: " << t_cw;
+//        LOG(INFO) << "solvePnPbyLM\n";
+//        LOG(INFO) << "init t_cw: " << t_cw;
         assert(pts_3.size() == pts_2.size());
         std::vector<cv::Point2f> un_pts_2;  // normalized points in camera frame
         cv::undistortPoints(pts_2, un_pts_2, K, D);
@@ -134,8 +134,8 @@ public:
                 iter_begin_ete += e.transpose() * e;
             }
             static double lm_threhold = iter_begin_ete * 1e-6;
-            LOG(INFO) << ">iter: " << iter << ", lambda: " << lambda
-                      << ", iter_begin_ete: " << iter_begin_ete << "\n";
+//            LOG(INFO) << ">iter: " << iter << ", lambda: " << lambda
+//                      << ", iter_begin_ete: " << iter_begin_ete << "\n";
 
             bool current_step_is_good = false;
             int fail_count = 0;
@@ -149,14 +149,14 @@ public:
                 Eigen::Matrix<double, 6, 1> dx = H.ldlt().solve(b);
                 H = H_bk;
 
-                LOG(INFO) << "dx: " << dx.transpose() << "\n";
+//                LOG(INFO) << "dx: " << dx.transpose() << "\n";
                 // 退出条件1
                 if (/*dx.segment(0,3).squaredNorm() < 1e-6 ||*/ fail_count >= 10) {
-                    LOG(ERROR) << "fail_count: " << fail_count << "\n";
-                    LOG(ERROR) << "stop since delta_x normal is less than threshold"
-                               << ", " << dx.segment(0, 3).squaredNorm()
-                               << "<="
-                                  "1e-6\n";
+//                    LOG(ERROR) << "fail_count: " << fail_count << "\n";
+//                    LOG(ERROR) << "stop since delta_x normal is less than threshold"
+//                               << ", " << dx.segment(0, 3).squaredNorm()
+//                               << "<="
+//                                  "1e-6\n";
                     stop_iter = true;
                     break;
                 }
@@ -180,10 +180,10 @@ public:
                 // 计算rho，来判断如何更新lambda
                 double scale =
                         0.5 * dx.transpose() * (b + lambda * dx);  // scale为二阶近似ete下降的量
-                LOG(INFO) << "scale: " << scale << "\n";
+//                LOG(INFO) << "scale: " << scale << "\n";
                 double rho = (last_ete - new_ete) /
                              scale;  // 分子为真正下降的ete，分母为二阶近似后下降的ete
-                LOG(INFO) << "rho: " << rho << "\n";
+//                LOG(INFO) << "rho: " << rho << "\n";
 
                 // update lambda 策略1
                 // if (rho > 0 && isfinite(new_ete)) {
@@ -229,7 +229,7 @@ public:
             }
         }
 
-        LOG(INFO) <<" result t_cw: " << t_cw.transpose() << ", R_cw: " << R_cw;
+//        LOG(INFO) <<" result t_cw: " << t_cw.transpose() << ", R_cw: " << R_cw;
         Eigen::Isometry3d raw_T_cw = Eigen::Isometry3d::Identity();
         raw_T_cw.rotate(raw_R_cw);
         raw_T_cw.pretranslate(raw_t_cw);
@@ -237,7 +237,7 @@ public:
         T_cw.rotate(R_cw);
         T_cw.pretranslate(t_cw);
         Eigen::Isometry3d T_raw_c_c  = raw_T_cw * T_cw.inverse();
-        LOG(INFO) << "T_raw_c_c: " << T_raw_c_c.translation();
+//        LOG(INFO) << "T_raw_c_c: " << T_raw_c_c.translation();
 
         return;
     }
@@ -250,7 +250,7 @@ public:
                      Eigen::Matrix<double, 6, 1>& b,
                      std::vector<int> inliers = std::vector<int>(),
                      double* ete = nullptr) {
-        LOG(INFO) << "makeHessian";
+//        LOG(INFO) << "makeHessian";
         if(ete){
             *ete = 0;
         }
